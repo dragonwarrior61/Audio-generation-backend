@@ -1,2 +1,5 @@
 fastapi
 uvicorn
+sqlalchemy
+pydantic
+pydantic_settings
