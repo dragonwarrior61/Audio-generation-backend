@@ -7,7 +7,6 @@ class Profile(Base):
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), unique=True, nullable=False)
-    company = Column(String, index=True)
     phone = Column(String, index=True)
     country = Column(String, index=True)
     avatar = Column(String, nullable=True)

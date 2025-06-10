@@ -3,16 +3,18 @@ from typing import Optional
 from datetime import datetime
 
 class UserBase(BaseModel):
-    address: Optional[str] = None
-    username: str
     email: EmailStr
-    full_name: Optional[str] = None
+    auth_provider: str
+    provider_user_id: Optional[int] = None
     
 class UserCreate(UserBase):
     password: str
     
 class UserRead(UserBase):
     id: int
+    is_verified: bool
+    verification_token: Optional[str] = None
+    verification_token_expires: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     last_logged_in: Optional[datetime] = None
@@ -22,4 +24,12 @@ class UserRead(UserBase):
         from_attributes = True
         
 class UserUpdate(UserBase):
-    password: str
+    password: Optional[str] = None
+    is_verified: Optional[bool] = None
+    verificiation_token: Optional[str] = None
+    verificiation_token_expires: Optional[datetime] = None
+    last_logged_in: Optional[datetime] = None
+    
+    class Config:
+        orm_mode = True
+        from_atrributes = True

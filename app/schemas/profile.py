@@ -3,7 +3,6 @@ from typing import Optional, Union, Dict
 from datetime import datetime
 
 class ProfileBase(BaseModel):
-    company: Optional[str] = None
     phone: Optional[str] = None
     country: Optional[str] = None
     avatar: Optional[Union[str, Dict[str, str]]] = None

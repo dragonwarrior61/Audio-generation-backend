@@ -3,3 +3,6 @@ uvicorn
 sqlalchemy
 pydantic
 pydantic_settings
+authlib
+python-jose[cryptography]
+passlib
