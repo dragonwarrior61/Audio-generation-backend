@@ -13,6 +13,9 @@ from authlib.integrations.starlette_client import OAuth
 from fastapi import Request
 from jose import jwt
 from passlib.context import CryptContext
+import secrets
+from pydantic import EmailStr
+from fastapi_mail import FastMail, MessageSchema
 
 router = APIRouter()
 
@@ -35,22 +38,6 @@ oauth.register(
     refresh_token_url=None,
     client_kwargs={'scope': 'openid email profile'}
 )
-
-def verify_password(plain_password: str, hashed_password: str):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password: str):
-    return pwd_context.hash(password)
-
-def create_access_token(data: dict, expires_delta: timedelta = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
 
 async def get_or_create_user(db: AsyncSession, email: str, provider: str = None, provider_user_id: str = None):
     result = await db.execute(
@@ -77,7 +64,7 @@ async def get_or_create_user(db: AsyncSession, email: str, provider: str = None,
     elif provider and not user.auth_provider:
         user.auth_provider = provider
         user.provider_user_id = provider_user_id
-        user.email_verified = True
+        user.is_verified = True
         await db.commit()
         await db.refresh(user)
     
@@ -99,8 +86,15 @@ async def register_user(
             )
         else:
             existing_user.hashed_password = get_password_hash(user_data.password)
+            existing_user.auth_provider = "email"
+            existing_user.verification_token = secrets.token_urlsafe(32)
+            existing_user.verification_token_expires = datetime.utcnow() + timedelta(minutes=10)
+            existing_user.updated_at = datetime.utcnow()
+            
             await db.commit()
             await db.refresh(existing_user)
+            
+            await send_verification_email(existing_user.email, existing_user.verification_token)
             return existing_user
     
     user = User(
@@ -113,6 +107,24 @@ async def register_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+async def send_verification_email(email: EmailStr, token: str):
+    verfication_url = f"{settings.BASE_URL}/auth/verify-email?token={token}"
+    message = MessageSchema(
+        subject = "Please verify your email address",
+        recipients=[email],
+        body=f"""
+        <h2>Welcome to our service!</h2>
+        <p>Please click the link below to verify your email address:</p>
+        <p><a href="{verfication_url}">Verify Email</a></p>
+        <p>This link will expire in 10 minutes.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+        """,
+        subtype="html"
+    )
+    
+    fm = FastMail(settings.email_conf)
+    await fm.send_message(message)
 
 @router.get("/login/google")
 async def login_google(request: Request):

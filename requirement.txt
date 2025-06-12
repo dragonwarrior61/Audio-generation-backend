@@ -6,3 +6,4 @@ pydantic_settings
 authlib
 python-jose[cryptography]
 passlib
+fastapi_mail

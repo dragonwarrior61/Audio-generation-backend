@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers import user
 import ssl
 import uvicorn
 import logging
@@ -26,6 +27,8 @@ app.add_middleware(
     allow_methods = ["*"],
     allow_headers = ["*"]
 )
+
+app.include_router(user.router, prefix="/api/users", tags=["users"])
 
 # async def init_models():
 #     async with engine.begin() as conn:
