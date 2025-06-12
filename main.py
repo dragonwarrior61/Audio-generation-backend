@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import user
+from app.routers import auth
+from app.database import engine, Base
 import ssl
 import uvicorn
 import logging
@@ -28,15 +30,16 @@ app.add_middleware(
     allow_headers = ["*"]
 )
 
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/users", tags=["users"])
 
-# async def init_models():
-#     async with engine.begin() as conn:
-#         await conn.run_sync(Base.metadata.create_all)
+async def init_models():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
         
-# @app.on_event("startup")
-# async def on_startup():
-#     await init_models()
+@app.on_event("startup")
+async def on_startup():
+    await init_models()
 
 if __name__ == "__main__":
     

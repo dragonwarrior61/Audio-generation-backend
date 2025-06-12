@@ -9,3 +9,4 @@ passlib
 fastapi_mail
 asyncpg
 httpx
+python_multipart
