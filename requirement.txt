@@ -7,3 +7,5 @@ authlib
 python-jose[cryptography]
 passlib
 fastapi_mail
+asyncpg
+httpx
