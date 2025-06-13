@@ -10,14 +10,15 @@ from app.models.user import User
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.config import settings
 from app.routers.email_service import send_verification_email
-from starlette.config import Config
-from authlib.integrations.starlette_client import OAuth
-from fastapi import Request
 from jose import jwt, JWTError
-from app.routers.security import get_password_hash, create_access_token
+from app.routers.security import get_password_hash, create_access_token, verify_password
 import secrets
 from pydantic import EmailStr
 from fastapi_mail import FastMail, MessageSchema
+from starlette.config import Config
+from authlib.integrations.starlette_client import OAuth, OAuthError
+from fastapi import Request
+from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -25,19 +26,18 @@ SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = settings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
-config = Config('.env')
-oauth = OAuth(config)
+oauth = OAuth()
 
-# oauth.register(
-#     name='google',
-#     client_id=config('GOOGLE_CLIENT_ID'),
-#     client_secret=config('GOOGLE_CLIENT_SECRET'),
-#     authorize_url='https://accounts.google.com/o/oauth2/auth',
-#     authorize_params=None,
-#     access_token_url='https://accounts.google.com/o/oauth2/token',
-#     refresh_token_url=None,
-#     client_kwargs={'scope': 'openid email profile'}
-# )
+oauth.register(
+    name='google',
+    client_id=settings.GOOGLE_GLIENT_ID,
+    client_secret=settings.GOOGLE_CLIENT_SECRET,
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={
+        'scope': 'openid email profile',
+        'prompt': 'select_account',
+    }
+)
 
 async def get_or_create_user(db: AsyncSession, email: str, provider: str = None, provider_user_id: str = None):
     result = await db.execute(
@@ -77,9 +77,9 @@ async def register_user(
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(User).where(User.email == user_data.email))
-    existing_user_by_email = result.scalars().first()
+    existing_user = result.scalars().first()
     
-    if existing_user_by_email:
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User already registered",
@@ -169,17 +169,53 @@ async def verify_email(
             detail="Invalid token"
         )
 
-# @router.get("/login/google")
-# async def login_google(request: Request)
-#     redirect_uri = request.url_for('auth_google')
-#     return await oauth.google.authorize_redirect(request, redirect_uri)
+@router.get("/login/google")
+async def login_google(request: Request):
+    redirect_uri = request.url_for("auth_google")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
 
-# @router.get("/auth/google")
-# async def auth_googel(request: Request):
-#     token = await oauth.google.authorize_access_token(request)
-#     user_data = await oauth.google.parse_id_token(request, token)
-#     email = user_data.get('email')
+@router.get("/auth/google")
+async def auth_googel(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except OAuthError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error)
+        )
+        
+    user_info = token.get("userinfo")
+    if not user_info:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not get user info"
+        )
     
-#     user = await get_or_create_user(email)
-    
-#     return {"user": user.email, "access_token": create_jwt_token(user.id)}
+    email = user_info.get('email')
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email not provided by Google"
+        )
+        
+    try:
+        user = await get_or_create_user(
+            db=db,
+            email=email,
+            provider="google",
+            provider_user_id=user_info.get("sub"),
+        )
+
+        access_token = create_access_token(
+            data={"email": str(user.email)}
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+        

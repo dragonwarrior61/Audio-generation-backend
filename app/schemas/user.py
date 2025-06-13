@@ -8,7 +8,7 @@ class UserBase(BaseModel):
     provider_user_id: Optional[int] = None
     
 class UserCreate(UserBase):
-    password: str
+    password: Optional[str] = None
     
 class UserRead(UserBase):
     id: int

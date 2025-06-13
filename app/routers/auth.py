@@ -11,8 +11,9 @@ from app.models.user import User
 from app.config import settings
 from app.schemas.user import UserRead
 from fastapi.security import OAuth2PasswordRequestForm
-router = APIRouter()
 
+
+router = APIRouter()
 class Token(BaseModel):
     access_token: str
     refresh_token: str
@@ -123,3 +124,5 @@ async def refresh_access_token(refresh_token: str):
 @router.post("/verify_token", response_model=UserRead)
 async def get_user(current_user: User = Depends(get_current_user)):
     return current_user
+
+

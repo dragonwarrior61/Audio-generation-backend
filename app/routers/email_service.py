@@ -1,8 +1,6 @@
 from fastapi import BackgroundTasks
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from app.config import settings
-from pathlib import Path
-from typing import Dict
 
 conf = ConnectionConfig(
     MAIL_USERNAME=settings.MAIL_USERNAME,
