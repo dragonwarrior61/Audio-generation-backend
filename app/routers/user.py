@@ -14,6 +14,7 @@ from jose import jwt, JWTError
 from app.routers.security import get_password_hash, create_access_token, verify_password
 import secrets
 from pydantic import EmailStr
+from app.routers.auth import get_current_user
 from fastapi_mail import FastMail, MessageSchema
 from starlette.config import Config
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -219,3 +220,56 @@ async def auth_googel(
             detail=str(e)
         )
         
+        
+@router.get("/{user_id}", response_model=UserRead)
+async def read_user(user_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.id != user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authenciation error")
+    
+    result = await db.execute(select(User).where(User.id == user_id))
+    db_user = result.scalars().first()
+    
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    return db_user
+
+@router.put("/{user_id}", response_model=UserRead)
+async def update_user(user_id: int, user: UserUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authenciation error")
+    
+    result = await db.execute(select(User).where(User.id == user_id))
+    db_user = result.scalars().first()
+    
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    for var, value in vars(user).items():
+        setattr(db_user, var, value) if value is not None else None
+        
+    if user.password:
+        db_user.hashed_password = get_password_hash(user.password)
+        
+    db_user.updated_at = datetime.utcnow()
+    
+    await db.commit()
+    await db.refresh(db_user)
+    
+    return db_user
+
+@router.delete("/{user_id}", response_model=UserRead)
+async def delete_user(user_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.id != user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authenciation error")
+    
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
+    
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    await db.delete(user)
+    await db.commit()
+    
+    return user
