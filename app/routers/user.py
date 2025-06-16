@@ -3,24 +3,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserRead, UserUpdate
-from app.schemas.subscription_history import SubscriptionHistoryRead
+from app.models.subscription_history import SubScriptionHistory
+from app.schemas.subscription_history import SubscriptionHistoryRead, SubscriptionHistoryCreate
 from app.config import settings
 from app.routers.email_service import send_verification_email
 from jose import jwt, JWTError
-from app.routers.security import get_password_hash, create_access_token, verify_password
-import secrets
-from pydantic import EmailStr
+from app.routers.security import get_password_hash, create_access_token
 from app.routers.auth import get_current_user
-from fastapi_mail import FastMail, MessageSchema
-from starlette.config import Config
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Request
-from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -277,4 +272,38 @@ async def delete_user(user_id: int, user: User = Depends(get_current_user), db: 
     
     return user
 
-@router.post("/{user_id}/subscription-history", response_model=Subscription)
+@router.post("/{user_id}/subscription-history", response_model=SubscriptionHistoryRead)
+async def create_subscription_history(
+    user_id: int,
+    history: SubscriptionHistoryCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+    
+    db_history = SubScriptionHistory(
+        user_id=user_id,
+        event_type=history.event_type,
+        event_data=history.event_data
+    )
+    db.add(db_history)
+    
+    await db.commit()
+    await db.refresh(db_history)
+    return db_history
+
+@router.get("/{user_id}/subscription-history", response_model=list[SubscriptionHistoryRead])
+async def get_subsciption_history(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+    
+    result = await db.execute(
+        select(SubScriptionHistory).where(SubScriptionHistory.user_id == user_id).order_by(SubScriptionHistory.created_at.desc())
+    )
+    
+    return result.scalars().all()

@@ -9,7 +9,7 @@ from app.routers.security import oauth2_scheme, create_access_token, create_refr
 from app.database import get_db
 from app.models.user import User
 from app.config import settings
-from app.schemas.user import UserRead
+from app.schemas.user import UserRead, UserInDB
 from fastapi.security import OAuth2PasswordRequestForm
 
 
@@ -39,6 +39,7 @@ async def get_current_user(
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"}
     )
     
@@ -63,24 +64,15 @@ async def get_current_user(
             detail="Please verify your email first"
         )
         
-    return user
-
-class UserInDB(BaseModel):
-    id: int
-    email: str
-    hashed_password: str
+    return UserRead.from_orm(user)
 
 async def authenticate_user(db: AsyncSession, email: str, password: str):
     result = await db.execute(select(User).filter(User.email == email))
     user = result.scalars().first()
     if not user or not verify_password(password, user.hashed_password):
-        return False
+        return None
 
-    return UserInDB(
-        id=user.id,
-        email=user.email,
-        hashed_password=user.hashed_password
-    )
+    return UserInDB.from_orm(user)
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(
@@ -100,26 +92,48 @@ async def login_for_access_token(
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     refresh_token_expires = timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES)
     
-    access_token = create_access_token(data={"email": user.email}, expires_delta=access_token_expires)
-    refresh_token = create_refresh_token(data={"email": user.email}, expires_delta=refresh_token_expires)
+    access_token = create_access_token(
+        data={
+            "email": user.email,
+            "sub_status": user.subscription_status.value if user.subscription_status else None
+        }, 
+        expires_delta=access_token_expires
+    )
     
-    return {"access_token": access_token, "refresh_token": refresh_token}
+    refresh_token = create_refresh_token(data={"email": user.email}, expires_delta=refresh_token_expires)
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 @router.post("/refresh", response_model=Token)
-async def refresh_access_token(refresh_token: str):
+async def refresh_access_token(
+    refresh_token: str,
+    db: AsyncSession = Depends(get_db)
+):
     try:
         payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("email")
         
         if email is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-        token_data = TokenData(email=email)
+        
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User no longer exists"
+            )
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(data={"email": token_data.email}, expires_delta=access_token_expires)
-    return {"access_token": access_token, "refresh_token": refresh_token}
+    access_token = create_access_token(
+        data={
+            "email": user.email,
+            "sub_status": user.subscription_status.value if user.subscription_status else None
+        }, 
+        expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 @router.post("/verify_token", response_model=UserRead)
 async def get_user(current_user: User = Depends(get_current_user)):
