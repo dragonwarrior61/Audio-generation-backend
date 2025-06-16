@@ -40,7 +40,7 @@ async def create_payment_intent(payment: PaymentRequest):
 async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get('stripe-signature')
-    webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
+    webhook_secret = 
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)

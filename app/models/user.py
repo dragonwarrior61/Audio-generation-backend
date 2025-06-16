@@ -1,7 +1,15 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Enum
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
+from enum import Enum as PyEnum
+
+class SubscriptionStatus(PyEnum):
+    INACTIVE = "inactive"
+    ACTIVE = "active"
+    CANCELLED = "cancelled"
+    PAST_DUE = "past_due"
+    PENDING = "pending"
 
 class User(Base):
     __tablename__ = 'users'
@@ -17,4 +25,19 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_logged_in = Column(DateTime, nullable=True)
+    
+    subscription_status = Column(
+        Enum(SubscriptionStatus),
+        default=SubscriptionStatus.INACTIVE,
+        nullable=False
+    )
+    subscription_id = Column(String, nullable=True)
+    subscription_plan_id = Column(String, nullable=True)
+    subsrciption_start_date = Column(String, nullable=True)
+    subscription_end_date = Column(DateTime, nullable=True)
+    subscription_cancel_at_period_end = Column(Boolean, default=False)
+    subscription_auto_renew = Column(Boolean, default=True)
+    payment_method = Column(String, nullable=True)
+    
+    subscription_history = relationship("SubscriptionHistory", back_populates="user")
     

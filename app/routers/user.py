@@ -8,6 +8,7 @@ from sqlalchemy import func, or_
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.schemas.subscription_history import SubscriptionHistoryRead
 from app.config import settings
 from app.routers.email_service import send_verification_email
 from jose import jwt, JWTError
@@ -55,9 +56,10 @@ async def get_or_create_user(db: AsyncSession, email: str, provider: str = None,
     if not user:
         user = User(
             email=email,
-            email_verified=True if provider else False,
             auth_provider=provider,
-            provider_user_id=provider_user_id
+            provider_user_id=provider_user_id,
+            is_verified=True if provider else False,
+            subscription_status="inactive"
         )
         db.add(user)
         await db.commit()
@@ -98,7 +100,8 @@ async def register_user(
         auth_provider="email",
         email_verified=False,
         verification_token=verification_token,
-        verification_token_expires=datetime.utcnow() + timedelta(minutes=10)
+        verification_token_expires=datetime.utcnow() + timedelta(minutes=10),
+        subscription_status="inactive"
     )
     db.add(user)
     await db.flush()
@@ -111,7 +114,7 @@ async def register_user(
     
     await db.commit()
     await db.refresh(user)
-    return {"message": "Verification email sent. Please check your email."}
+    return user
 
 @router.post("/verifiy-email")
 async def verify_email(
@@ -273,3 +276,5 @@ async def delete_user(user_id: int, user: User = Depends(get_current_user), db: 
     await db.commit()
     
     return user
+
+@router.post("/{user_id}/subscription-history", response_model=Subscription)
