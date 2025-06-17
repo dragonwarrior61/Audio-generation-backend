@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from io import BytesIO
@@ -129,3 +130,94 @@ async def generate_tts(request: TTSRequest, user: User = Depends(get_current_use
         
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Minimax API error: {str(e)}")
+    
+VOICE_DESING_URL = "https://api.minimax.io/v1/voice_design"
+
+class VoiceDesignRequest(BaseModel):
+    prompt: str = Field(..., min_length=10, max_length=1000, description="Detailed description of desired voice characteristics")
+    preview_text: str = Field(..., max_length=500, description="Text for preview audio(max 500 chars)")
+    
+class VoiceDesignResponse(BaseModel):
+    voice_id: str
+    preview_audio: str
+    activation_status: bool
+    expires_at: Optional[datetime]
+    
+@router.post("/design")
+async def design_voice(
+    request: VoiceDesignRequest,
+    user: User = Depends(get_current_user)
+):
+    if user.subscription_status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription reuqired for voice design"
+        )
+        
+    try:
+        design_headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content_Type": "application/json"
+        }
+        
+        design_payload = {
+            "prompt": request.prompt,
+            "preview_text": request.preview_text,
+        }
+        
+        design_response = requests.post(
+            VOICE_DESING_URL,
+            headers=design_headers,
+            json=design_payload,
+            timeout=30
+        )
+        
+        design_response.raise_for_status()
+        design_data = design_response.json()
+        
+        activation_payload = {
+            "text": request.prompt,
+            "voice_setting": {
+                "voice_id": design_data["voice_id"]
+            },
+            "audio_setting": {
+                "format": "mp3"
+            }
+        }
+        
+        activation_response = requests.post(
+            TTS_URL,
+            headers=design_headers,
+            json=activation_payload,
+            timeout=30
+        )
+        
+        activation_response.raise_for_status()
+        
+        return {
+            "voice_id": design_data["voice_id"],
+            "preview_audio": design_data.get("trial_audio", ""),
+            "activation_status": True,
+            "expires_at": None
+        }
+    
+    except requests.Timeout:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Voice design service timeout"
+        )
+        
+    except requests.HTTPError as e:
+        error_detail = f"Minimax API error: {str(e)}"
+        if e.response.status_code == 402:
+            error_detail = "Insufficient credits for voice design"
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=error_detail
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Voice design failed: {str(e)}"
+        )
+        
