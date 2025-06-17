@@ -3,10 +3,14 @@ import time
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from io import BytesIO
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import StreamingResponse
 from app.config import settings
 from app.database import get_db
+from sqlalchemy.future import select
+from app.models.user import User
+from app.routers.auth import get_current_user
+
 from sqlalchemy.ext.asyncio import AsyncSession
 import requests
 
@@ -16,6 +20,12 @@ GROUP_ID = settings.GROUP_ID
 API_KEY = settings.API_KEY
 TTS_URL = f"https://api.minimax.io/v1/t2a_v2?GroupId={GROUP_ID}"
 
+SUPPORTED_FORMATS = {
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "flac": "audio/flac",
+    "pcm": "audio/x-wav"
+}
 class Voice(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     vol: float = Field(default=1.0, gt=0, le=10)
@@ -76,7 +86,20 @@ class TTSRequest(BaseModel):
     output_format: str = Field(default="hex", enum=["url", "hex"])
 
 @router.post("/generate")
-async def generate_tts(request: TTSRequest):
+async def generate_tts(request: TTSRequest, user: User = Depends(get_current_user)):
+    
+    if user.subscription_status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Active subscription required for TTS generation"
+        )
+    
+    if request.audio_settings.format not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Upsupported audio format. Supported formats: {list(SUPPORTED_FORMATS.keys())}"
+        )
+    
     try:
         headers = {
             "Authorization": f"Bearer {API_KEY}",
