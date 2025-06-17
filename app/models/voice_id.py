@@ -3,7 +3,7 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
 
-class Voice(Base):
+class Voice_ID(Base):
     __tablename__ = 'voice'
     
     id = Column(Integer, primary_key=True)

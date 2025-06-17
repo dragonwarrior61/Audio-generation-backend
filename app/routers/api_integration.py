@@ -11,7 +11,7 @@ from app.database import get_db
 from sqlalchemy.future import select
 from app.models.user import User
 from app.routers.auth import get_current_user
-from app.models.voice_id import Voice
+from app.models.voice_id import Voice_ID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 import requests
@@ -107,7 +107,7 @@ async def generate_tts(request: TTSRequest, user: User = Depends(get_current_use
     
     request_voice_id = request.voice_settings.voice_id
     
-    result = await db.execute(select(Voice).where(Voice.voice_id == request_voice_id, Voice.user_id == user.id))
+    result = await db.execute(select(Voice_ID).where(Voice_ID.voice_id == request_voice_id, Voice_ID.user_id == user.id))
     db_voice = result.scalars().first()
     
     if db_voice is None and request_voice_id not in system_voice:
@@ -209,7 +209,7 @@ async def design_voice(
         
         activation_response.raise_for_status()
         
-        voice = Voice(
+        voice = Voice_ID(
             user_id = user.id,
             voice_id = design_data["voice_id"],
         )
