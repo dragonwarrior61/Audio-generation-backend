@@ -61,6 +61,7 @@ async def update_user_subscription(
     user.subscription_id = subscription_id
     user.subscription_plan_id = plan_id
     user.subscription_status = sub_status
+    user.payment_method = "paypal"
     
     if sub_status == SubscriptionStatus.ACTIVE:
         user.subsrciption_start_date = datetime.utcnow()
@@ -210,6 +211,10 @@ async def paypal_webhook(
                 plan_id=user.subscription_plan_id,
                 sub_status=SubscriptionStatus.ACTIVE
             )
+            
+            if user.payment_method != "paypal":
+                user.payment_method ="paypal"
+                await db.commit()
             await create_subscription_history(
                 db=db,
                 user_id=user.id,
