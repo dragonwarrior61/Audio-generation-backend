@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import user
-from app.routers import auth
+from app.routers import user, auth, api_integration, paypal, stripe, voice_id
 from app.database import engine, Base
 import ssl
 import uvicorn
@@ -32,6 +31,10 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/users", tags=["users"])
+app.include_router(api_integration.router, prefix="/api/api_integration", tags=["api_integration"])
+app.include_router(paypal.router, prefix="/api/paypal", tags=["paypal"])
+app.include_router(stripe.router, prefix="api/stripe", tags=["stripe"])
+app.include_router(voice_id.router, prefix="api/voice_id", tags=["voice_id"])
 
 async def init_models():
     async with engine.begin() as conn:
