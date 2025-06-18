@@ -9,4 +9,5 @@ class Voice_ID(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, index=True)
     voice_id = Column(String, nullable=True)
+    detail_info = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from io import BytesIO
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from app.config import settings
 from app.database import get_db
@@ -12,6 +12,7 @@ from sqlalchemy.future import select
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.models.voice_id import Voice_ID
+import os
 
 from sqlalchemy.ext.asyncio import AsyncSession
 import requests
@@ -118,7 +119,7 @@ async def generate_tts(request: TTSRequest, user: User = Depends(get_current_use
     try:
         headers = {
             "Authorization": f"Bearer {API_KEY}",
-            "Content_Type": "application/json"
+            "Content-Type": "application/json"
         }
         
         payload = {**request.dict(exclude_none=True)}
@@ -172,7 +173,7 @@ async def design_voice(
     try:
         design_headers = {
             "Authorization": f"Bearer {API_KEY}",
-            "Content_Type": "application/json"
+            "Content-Type": "application/json"
         }
         
         design_payload = {
@@ -212,6 +213,7 @@ async def design_voice(
         voice = Voice_ID(
             user_id = user.id,
             voice_id = design_data["voice_id"],
+            detail_info = "Voice Design"
         )
         
         db.add(voice)
@@ -242,5 +244,157 @@ async def design_voice(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Voice design failed: {str(e)}"
+        )
+
+
+FILE_UPLOAD_URL = f"https://api.minimax.io/v1/files/upload?GroupId={GROUP_ID}"
+VOICE_CLONE_URL = f"https://api.minimax.io/v1/voice_clone?GroupId={GROUP_ID}"
+
+class FileUploadResponse(BaseModel):
+    file_id: str
+    filename: str
+    bytes: int
+    created_at: int
+    
+class VoiceCloneRequest(BaseModel):
+    file_id: str
+    voice_id: str = Field(..., min_length=8, regex="^[a-zA-Z][a-zA-Z0-9]{7,}$")
+    need_noise_reduction: bool = False
+    text: Optional[str] = Field(None, max_length=2000)
+    model: Optional[str] = Field(None, enum = ["speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo"])
+    accuracy: Optional[float] = Field(None, ge=0, le=1)
+    need_volumn_normalization: bool = False
+    
+class VoiceCloneResponse(BaseModel):
+    voice_id: str
+    input_sensitive: bool
+    preview_audio: Optional[str] = None
+    
+@router.post("/upload", response_model=FileUploadResponse)
+async def upload_voice_sample(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    purpose: str = Form("voice_clone")
+):
+    allowed_type = ["audio/mpeg", "audio/m4a", "audio/wav"]
+    if file.content_type not in allowed_type:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type. Allowed: MP3, M4A, WAV"
+        )
+        
+    try:
+        headers = {
+            "Authorization": f"Bearer {API_KEY}"
+        }
+        
+        files = {
+            "file": (file.filename, file.file, file.content_type)
+        }
+        
+        data = {
+            "purpose": purpose
+        }
+        
+        response = requests.post(
+            FILE_UPLOAD_URL,
+            headers=headers,
+            files=files,
+            data=data
+        )
+        
+        response.raise_for_status()
+        
+        file_data = response.json()["file"]
+        return FileUploadResponse(**file_data)
+    
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File upload failed: {str(e)}"
+        )
+        
+@router.post("/clone", response_model=VoiceCloneRequest)
+async def clone_voice(
+    request: VoiceCloneRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if user.subscription_status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required for voice cloning"
+        )
+        
+    try:
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        result = await db.execute(select(Voice_ID).where(Voice_ID.voice_id == request.voice_id))
+        existing_voice = result.scalars().first()
+        
+        if existing_voice:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Voice ID already exists"
+            )
+            
+        response = requests.post(
+            VOICE_CLONE_URL,
+            headers=headers,
+            json=request.model_dump(exclude_none=True)
+        )
+        
+        response.raise_for_status()
+        clone_data = response.json()
+        
+        voice = Voice(
+            user_id=user.id,
+            voice_id=request.voice_id,
+            detail_info="Voice Clone",
+        )
+        
+        db.add(voice)
+        await db.commit()
+        
+        activation_payload = {
+            "text": "Voice activation",
+            "voice_setting": {
+                "voice_id": request.voice_id
+            },
+            "audio_setting": {
+                "format": "mp3"
+            }
+        }
+        
+        activation_response = requests.post(
+            TTS_URL,
+            headers=headers,
+            json=activation_payload
+        )
+        activation_response.raise_for_status()
+        
+        return VoiceCloneResponse(
+            voice_id=request.voice_id,
+            input_sensitive=clone_data.get("input_sensitive", False),
+            preview_audio=clone_data.get("preview_audio")
+        )
+        
+    except requests.HTTPError as e:
+        await db.rollback()
+        error_detail = f"Voice cloning failed: {str(e)}"
+        if e.response.status_code == 402:
+            error_detail = "Insufficient credits for voice cloning"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Voice cloning error: {str(e)}"
         )
         
