@@ -25,7 +25,7 @@ class StripeSubscriptionRequest(BaseModel):
     price_id: str
     user_id: int
     success_url: str
-    cancle_url: str
+    cancel_url: str
     
 async def create_stripe_customer(user: User):
     customer = stripe.Customer.create(
