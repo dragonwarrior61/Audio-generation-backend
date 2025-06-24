@@ -31,6 +31,8 @@ class UserRead(UserBase):
     subscription_cancel_at_period_end: bool
     subscription_auto_renew: bool
     payment_method: Optional[str]
+    character_balance: int
+    voice_balance: int
     class Config:
         orm_mode = True
 class UserUpdate(UserBase):

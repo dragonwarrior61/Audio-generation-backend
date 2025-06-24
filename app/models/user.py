@@ -39,5 +39,8 @@ class User(Base):
     subscription_auto_renew = Column(Boolean, default=True)
     payment_method = Column(String, nullable=True)
     
+    character_balance = Column(Integer, default=0)
+    voice_balance = Column(Integer, default=0)
+    
     subscription_history = relationship("SubscriptionHistory", back_populates="user")
     

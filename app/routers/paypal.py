@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException, Depends, status
+from fastapi.responses import JSONResponse
 import httpx
 from app.config import settings
 from pydantic import BaseModel
@@ -9,7 +10,8 @@ from app.database import get_db
 from app.models.user import User
 from app.models.subscription_history import SubScriptionHistory
 from app.schemas.user import SubscriptionStatus
-from typing import Optional
+from typing import Optional, Literal
+import json
 
 router = APIRouter()
 
@@ -158,102 +160,248 @@ async def create_subscription(
     
     return {"approval_url": approval_url, "subscription_id": subscription["id"]}
 
+class OneTimePaymentRequest(BaseModel):
+    tier: Literal["small", "medium", "large", "enterprise"]
+    user_id: int
+    return_url: str
+    cancel_url: str
+
+TIER_PRICES = {
+    "small": 20,
+    "medium": 40,
+    "large": 180,
+    "enterprise": 700
+}
+
+@router.post("/create_one_time_payment")
+async def create_one_time_payment(
+    payment_req: OneTimePaymentRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(User).where(User.id == payment_req.user_id))
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    access_token = await get_paypal_access_token()
+    
+    order_data = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "reference_id": f"otp_{payment_req.user_id}_{datetime.utcnow().timestamp()}",
+            "amount": {
+                "currency_code": "USD",
+                "value": TIER_PRICES[payment_req.tier],
+            },
+            "description": f"{payment_req.tier.capitalize()}"
+        }],
+        "application_context": {
+            "return_url": payment_req.return_url,
+            "cancel_url": payment_req.cancel_url,
+            "brand_name": settings.APP_NAME
+        }
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{PAYPAL_BASE_URL}/v2/checkout/orders",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json=order_data
+        )
+        
+    if response.status_code != 201:
+        raise HTTPException(status_code=400, detail="Failed to create ")
+    
+    payment_data = response.json()
+    approval_url = next(
+        link["href"] for link in payment_data["links"]
+        if link["rel"] == "approve"
+    )
+    
+    
+    await create_subscription_history(
+        db=db,
+        user_id=payment_req.user_id,
+        event_type="one_time_payment_created",
+        event_data={
+            "tier": payment_req.tier,
+            "amount": TIER_PRICES[payment_req.tier],
+            "paypal_order_id": payment_data["id"],
+            "status": "pending"
+        }
+    )
+    
+    return {"approval_url": approval_url, "order_id": payment_data["id"]}
+
 @router.post("/paypal-webhook")
 async def paypal_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    access_token = await get_paypal_access_token()
-    headers = {
-        "Content-type": "application/json",
-        "Authorization": f"Bearer {access_token}"
-    }
     
-    body = await request.json()
-    webhook_event = body.get("event_type")
-    
-    async with httpx.AsyncClient() as client:
-        verify_response = await client.post(
-            f"{PAYPAL_BASE_URL}/v1/notifications/verify-webhook-signature",
-            headers=headers,
-            json={
-                "transmission_id": request.headers.get("PAYPAL-TRANSMISSION-ID"),
-                "transmission_time": request.headers.get("PAYPAL-TRANSMISSION-TIME"),
-                "cert_url": request.headers.get("PAYPAL-CERT-URL"),
-                "auth_algo": request.headers.get("PAYPAL-AUTH-ALGO"),
-                "transmission_sig": request.headers.get("PAYPAL-TRANSMISSION-SIG"),
-                "webhook_id": PAYPAL_WEBHOOK_ID,
-                "webhook_event": body
-            }
-        )
+    try:
+        access_token = await get_paypal_access_token()
+        headers = {
+            "Content-type": "application/json",
+            "Authorization": f"Bearer {access_token}"
+        }
         
-    if verify_response.status_code != 200 or verify_response.json()["verification_status"] != "SUCCESS":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Webhook verification failed"
-        )
+        body = await request.json()
+        webhook_event = body.get("event_type")
         
-    subscription_id = None
-    user_id = None
-    
-    
-    if webhook_event == "BILLING.SUBSCRIPTION.ACTIVATED":
-        subscription_id = body["resource"]["id"]
-        result = await db.execute(select(User).where(User.subscription_id == subscription_id))
-        user = result.scalars().first()
-        
-        if user:
-            await update_user_subscription(
-                db=db,
-                user_id=user.id,
-                subscription_id=subscription_id,
-                plan_id=user.subscription_plan_id,
-                sub_status=SubscriptionStatus.ACTIVE
+        async with httpx.AsyncClient() as client:
+            verify_response = await client.post(
+                f"{PAYPAL_BASE_URL}/v1/notifications/verify-webhook-signature",
+                headers=headers,
+                json={
+                    "transmission_id": request.headers.get("PAYPAL-TRANSMISSION-ID"),
+                    "transmission_time": request.headers.get("PAYPAL-TRANSMISSION-TIME"),
+                    "cert_url": request.headers.get("PAYPAL-CERT-URL"),
+                    "auth_algo": request.headers.get("PAYPAL-AUTH-ALGO"),
+                    "transmission_sig": request.headers.get("PAYPAL-TRANSMISSION-SIG"),
+                    "webhook_id": PAYPAL_WEBHOOK_ID,
+                    "webhook_event": body
+                }
             )
             
-            if user.payment_method != "paypal":
-                user.payment_method ="paypal"
-                await db.commit()
-            await create_subscription_history(
-                db=db,
-                user_id=user.id,
-                event_type="subscription_activated",
-                event_data=body
+        if verify_response.status_code != 200 or verify_response.json()["verification_status"] != "SUCCESS":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="Webhook verification failed"
             )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Webhook processing error: {str(e)}"
+        )
         
-    elif webhook_event == "BILLING.SUBSCRIPTION.CANCELLED":
-        subscription_id = body["resource"]["id"]
-        result = await db.execute(select(User).where(User.subscription_id == subscription_id))
-        user = result.scalars().first()
-        if user:
-            await update_user_subscription(
-                db=db,
-                user_id=user.id,
-                subscription_id=subscription_id,
-                plan_id=user.subscription_plan_id,
-                sub_status=SubscriptionStatus.CANCELLED
+    try:
+        webhook_event = body.get("event_type")
+        resource = body.get("resource", {})
+        
+        if webhook_event == "BILLING.SUBSCRIPTION.ACTIVATED":
+            subscription_id = resource.get("id")
+            if not subscription_id:
+                return JSONResponse({"status": "missing subscription_id"}, status_code=400)
+            
+            result = await db.execute(select(User).where(User.subscription_id == subscription_id))
+            user = result.scalars().first()
+            
+            if user:
+                await update_user_subscription(
+                    db=db,
+                    user_id=user.id,
+                    subscription_id=subscription_id,
+                    plan_id=user.subscription_plan_id,
+                    sub_status=SubscriptionStatus.ACTIVE
+                )
+                
+                if user.payment_method != "paypal":
+                    user.payment_method = "paypal"
+                    await db.commit()
+                    
+                await create_subscription_history(
+                    db=db,
+                    user_id=user.id,
+                    event_type="subscription_activated",
+                    event_data=body
+                )
+            
+        elif webhook_event == "BILLING.SUBSCRIPTION.CANCELLED":
+            subscription_id = resource.get("id")
+            if not subscription_id:
+                return JSONResponse({"status": "missing subscription_id"}, status_code=400)
+            
+            result = await db.execute(select(User).where(User.subscription_id == subscription_id))
+            user = result.scalars().first()
+            if user:
+                await update_user_subscription(
+                    db=db,
+                    user_id=user.id,
+                    subscription_id=subscription_id,
+                    plan_id=user.subscription_plan_id,
+                    sub_status=SubscriptionStatus.CANCELLED
+                )
+                await create_subscription_history(
+                    db=db,
+                    user_id=user.id,
+                    event_type="subscription_cancelled",
+                    event_data=body
+                )
+            
+        elif webhook_event == "PAYMENT.SALE.COMPLETED":
+            subscription_id = resource.get("billing_agreement_id")
+            if not subscription_id:
+                return JSONResponse({"status": "missing subscription_id"}, status_code=400)
+            
+            result = await db.execute(select(User).where(User.subscription_id == subscription_id))
+            user = result.scalars().first()
+            
+            if user:
+                await create_subscription_history(
+                    db=db,
+                    user_id=user.id,
+                    event_type="payment_received",
+                    event_data=body
+                )
+                
+        elif webhook_event == "PAYMENT.CAPTURE.COMPLETED":
+            order_id = resource.get("id")
+            amount = float(resource.get("amount", {}).get("value", 0))
+            if not order_id:
+                raise JSONResponse({"status": "missing order_id"}, status_code=400)
+            
+            result = await db.execute(
+                select(SubScriptionHistory).where(
+                    SubScriptionHistory.event_data.contains(f'"paypal_order_id": "{order_id}')
+                )
             )
-            await create_subscription_history(
-                db=db,
-                user_id=user.id,
-                event_type="subscription_cancelled",
-                event_data=body
-            )
+            history = result.scalars().first()
+            
+            if history:
+                history_data = json.loads(history.event_data)
+                result = await db.execute(select(User).where(User.id == history.user_id))
+                user = result.scalars().first()
+                
+                if user:
+                    if history_data.get("tier") == "small":
+                        user.character_balance = user.character_balance + 500000
+                    elif history_data.get("tier") == "medium":
+                        user.character_balance = user.character_balance + 1000000
+                    elif history_data.get("tier") == "large":
+                        user.character_balance = user.character_balance + 5000000
+                    elif history_data.get("tier") == "enterprise":
+                        user.character_balance = user.character_balance + 20000000
+
+                    user.payment_method = "paypal"
+                    await db.commit()
+                    
+                    await create_subscription_history(
+                        db=db,
+                        user_id=user.id,
+                        event_type="one_time_payment_completed",
+                        event_data={
+                            **body,
+                            "characters_added": user.character_balance
+                        }
+                    )
         
-    elif webhook_event == "PAYMENT.SALE.COMPLETED":
-        subscription_id = body["resource"]["billing_agreement_id"]
-        result = await db.execute(select(User).where(User.subscription_id == subscription_id))
-        user = result.scalars().first()
-        
-        if user:
-            await create_subscription_history(
-                db=db,
-                user_id=user.id,
-                event_type="payment_received",
-                event_data=body
-            )
-        
-    return {"status": "success"}
+        return {"status": "success"}
+    
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing webhook: {str(e)}"
+        )
+
+
 
 @router.get("/subscription/{subscription_id}")
 async def get_subscription(
