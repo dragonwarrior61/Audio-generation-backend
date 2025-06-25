@@ -173,8 +173,8 @@ TIER_PRICES = {
     "enterprise": 700
 }
 
-@router.post("/create_one_time_payment")
-async def create_one_time_payment(
+@router.post("/create_character_payment")
+async def create_character_payment(
     payment_req: OneTimePaymentRequest,
     db: AsyncSession = Depends(get_db)
 ):
@@ -238,6 +238,92 @@ async def create_one_time_payment(
     )
     
     return {"approval_url": approval_url, "order_id": payment_data["id"]}
+
+class VoicePayment(BaseModel):
+    account_type: Literal["pro", "business"]
+    user_id: int
+    return_url: str
+    cancel_url: str
+    
+VOICE_CLONE_PRICES = {
+    "pro": 9,
+    "business": 6
+}
+
+@router.post("/create_voice_payment")
+async def create_voice_payment(
+    request: VoicePayment,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(User).where(User.id == request.user_id))
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="User not found"
+        )
+    
+    if user.subscription_status != SubscriptionStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required for voice cloning"
+        )
+        
+    access_token = await get_paypal_access_token()
+    
+    order_data = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "reference_id": f"otp_{request.user_id}_{datetime.utcnow().timestamp()}",
+            "amount": {
+                "currency_code": "USD",
+                "value": VOICE_CLONE_PRICES[request.account_type],
+            },
+            "description": f"Voice clone ({request.account_type} tier)",
+            "custom_id": str(request.user_id)
+        }],
+        "application_context": {
+            "return_url": request.return_url,
+            "cancel_url": request.cancel_url,
+            "brand_name": settings.APP_NAME
+        }
+    }
+    
+    async with httpx.AsyncClient() as client:
+        respones = await client.post(
+            f"{PAYPAL_BASE_URL}/v2/checkout/orders",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json=order_data
+        )
+        
+    if respones.status_code != 201:
+        raise HTTPException(status_code=400, detail="Payment creation failed")
+    
+    payment_data = respones.json()
+    
+    await create_subscription_history(
+        db=db,
+        user_id=request.user_id,
+        event_type="voice_payment_created",
+        event_data={
+            "tier": request.account_type,
+            "amount": VOICE_CLONE_PRICES[request.account_type],
+            "paypal_order_id": payment_data["id"],
+            "status": "pending"
+        }
+    )
+    
+    return {
+        "approval_url": next(
+            link["href"] for link in payment_data["links"]
+            if link["rel"] == "approve"
+        ),
+        "order_id": payment_data["id"]
+    }
 
 @router.post("/paypal-webhook")
 async def paypal_webhook(
@@ -378,19 +464,34 @@ async def paypal_webhook(
                         user.character_balance = user.character_balance + 5000000
                     elif history_data.get("tier") == "enterprise":
                         user.character_balance = user.character_balance + 20000000
+                    elif history_data.get("tier") == "pro":
+                        user.voice_balance = user.voice_balance + 1
+                    elif history_data.get("tier") == "business":
+                        user.voice_balance = user.voice_balance + 1
 
                     user.payment_method = "paypal"
                     await db.commit()
                     
-                    await create_subscription_history(
-                        db=db,
-                        user_id=user.id,
-                        event_type="one_time_payment_completed",
-                        event_data={
-                            **body,
-                            "characters_added": user.character_balance
-                        }
-                    )
+                    if history_data.get("tier") == "pro" or history_data.get("tier") == "business":
+                        await create_subscription_history(
+                            db=db,
+                            user_id=user.id,
+                            event_type="payment_completed",
+                            event_data={
+                                **body,
+                                "voice_balance": user.character_balance
+                            }
+                        )
+                    elif history_data.get("tier") in ["small", "medium", "large", "enterprise"]:
+                        await create_subscription_history(
+                            db=db,
+                            user_id=user.id,
+                            event_type="payment_completed",
+                            event_data={
+                                **body,
+                                "character_balance": user.character_balance
+                            }
+                        )
         
         return {"status": "success"}
     
