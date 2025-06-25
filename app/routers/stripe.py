@@ -515,7 +515,7 @@ async def cancel_subscription(
             payment_method="stripe"
         )
         
-        history = SubScriptionHistory(
+        history = PaymentHistory(
             user_id = user.id,
             event_type = "subscription_cancelled",
             event_data = json.dumps(subsciption)
