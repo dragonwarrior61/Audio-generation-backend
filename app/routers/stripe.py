@@ -84,6 +84,12 @@ async def update_user_stripe_info(
         user.payment_method = payment_method
     
     if sub_status == SubscriptionStatus.ACTIVE:
+        if plan_id == settings.STRIPE_PRO_PRICE_ID:
+            user.month_character_balance = 2000000
+            user.month_voice_balance = 2
+        elif plan_id == settings.STRIPE_BUSINESS_PRICE_ID:
+            user.month_voice_balance = 8000000
+            user.month_voice_balance = 10
         user.subsrciption_start_date = datetime.utcnow()
         user.subscription_end_date = datetime.utcnow() + timedelta(days=30)
         

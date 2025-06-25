@@ -65,6 +65,12 @@ async def update_user_subscription(
     user.payment_method = "paypal"
     
     if sub_status == SubscriptionStatus.ACTIVE:
+        if plan_id == settings.PAYPAL_PRO_PALN_ID:
+            user.month_character_balance = 2000000
+            user.month_voice_balance = 2
+        elif plan_id == settings.PAYPAL_BUSINESS_PLAN_ID:
+            user.month_voice_balance = 8000000
+            user.month_voice_balance = 10
         user.subsrciption_start_date = datetime.utcnow()
         user.subscription_end_date = datetime.utcnow() + timedelta(days=30)
     
