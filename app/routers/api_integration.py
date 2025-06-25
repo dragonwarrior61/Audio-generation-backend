@@ -88,10 +88,11 @@ class TTSRequest(BaseModel):
 
 @router.post("/generate")
 async def generate_tts(request: TTSRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    if user.subscription_status != "ACTIVE":
+    char_count = len(request.text)
+    if user.month_character_balance + user.character_balance < char_count:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Active subscription required for TTS generation"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Don't have enough balance"
         )
     
     system_voice = [ "Wise_Woman", "Friendly_Person", "Inspirational_girl", "Deep_Voice_Man", "Calm_Woman", 
@@ -133,6 +134,13 @@ async def generate_tts(request: TTSRequest, user: User = Depends(get_current_use
             "pcm": "audio/x-wav"
         }.get(request.audio_settings.format, "audio/mpeg")
         
+        user.month_character_balance = user.month_character_balance - char_count
+        if user.month_character_balance < 0:
+            user.character_balance = user.character_balance - user.month_character_balance
+            user.month_character_balance = 0
+            
+        await db.commit()
+        
         return StreamingResponse(
             audio_buffer,
             media_type=media_type,
@@ -166,6 +174,12 @@ async def design_voice(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Active subscription reuqired for voice design"
+        )
+        
+    if user.month_voice_balance == 0 and user.voice_balance == 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Don't have enough balance"
         )
         
     try:
@@ -207,6 +221,11 @@ async def design_voice(
         )
         
         activation_response.raise_for_status()
+        
+        if user.month_voice_balance > 0:
+            user.month_voice_balance = user.month_voice_balance - 1
+        elif user.voice_balance > 0:
+            user.voice_balance = user.voice_balance - 1
         
         voice = Voice_ID(
             user_id = user.id,
@@ -274,6 +293,12 @@ async def upload_voice_sample(
     user: User = Depends(get_current_user),
     purpose: str = Form("voice_clone")
 ):
+    if user.subscription_status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription required for voice cloning"
+        )
+        
     allowed_type = ["audio/mpeg", "audio/m4a", "audio/wav"]
     if file.content_type not in allowed_type:
         raise HTTPException(
@@ -324,6 +349,12 @@ async def clone_voice(
             detail="Active subscription required for voice cloning"
         )
         
+    if user.month_voice_balance == 0 and user.voice_balance == 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Don't have enough balance"
+        )
+    
     try:
         headers = {
             "Authorization": f"Bearer {API_KEY}",
@@ -347,6 +378,11 @@ async def clone_voice(
         
         response.raise_for_status()
         clone_data = response.json()
+        
+        if user.month_voice_balance > 0:
+            user.month_voice_balance = user.month_voice_balance - 1
+        elif user.voice_balance > 0:
+            user.voice_balance = user.voice_balance - 1
         
         voice = Voice(
             user_id=user.id,
