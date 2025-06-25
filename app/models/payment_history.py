@@ -3,8 +3,8 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
 
-class SubScriptionHistory(Base):
-    __tablename__ = 'subscription_history'
+class PaymentHistory(Base):
+    __tablename__ = 'payment_history'
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'))

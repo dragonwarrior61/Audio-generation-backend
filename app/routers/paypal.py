@@ -8,7 +8,7 @@ from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
-from app.models.subscription_history import SubScriptionHistory
+from app.models.payment_history import PaymentHistory
 from app.schemas.user import SubscriptionStatus
 from typing import Optional, Literal
 import json
@@ -72,13 +72,13 @@ async def update_user_subscription(
     await db.refresh(user)
     return user
 
-async def create_subscription_history(
+async def create_payment_history(
     db: AsyncSession,
     user_id: int,
     event_type: str,
     event_data: Optional[dict] = None
 ):
-    history = SubScriptionHistory(
+    history = PaymentHistory(
         user_id = user_id,
         event_type = event_type,
         event_data = str(event_data) if event_data else None
@@ -147,7 +147,7 @@ async def create_subscription(
         if link["rel"] == "approve"
     )
     
-    await create_subscription_history(
+    await create_payment_history(
         db=db,
         user_id=sub_req.user_id,
         event_type="subscription_created",
@@ -225,7 +225,7 @@ async def create_character_payment(
     )
     
     
-    await create_subscription_history(
+    await create_payment_history(
         db=db,
         user_id=payment_req.user_id,
         event_type="one_time_payment_created",
@@ -305,7 +305,7 @@ async def create_voice_payment(
     
     payment_data = respones.json()
     
-    await create_subscription_history(
+    await create_payment_history(
         db=db,
         user_id=request.user_id,
         event_type="voice_payment_created",
@@ -392,7 +392,7 @@ async def paypal_webhook(
                     user.payment_method = "paypal"
                     await db.commit()
                     
-                await create_subscription_history(
+                await create_payment_history(
                     db=db,
                     user_id=user.id,
                     event_type="subscription_activated",
@@ -414,7 +414,7 @@ async def paypal_webhook(
                     plan_id=user.subscription_plan_id,
                     sub_status=SubscriptionStatus.CANCELLED
                 )
-                await create_subscription_history(
+                await create_payment_history(
                     db=db,
                     user_id=user.id,
                     event_type="subscription_cancelled",
@@ -430,7 +430,7 @@ async def paypal_webhook(
             user = result.scalars().first()
             
             if user:
-                await create_subscription_history(
+                await create_payment_history(
                     db=db,
                     user_id=user.id,
                     event_type="payment_received",
@@ -444,8 +444,8 @@ async def paypal_webhook(
                 raise JSONResponse({"status": "missing order_id"}, status_code=400)
             
             result = await db.execute(
-                select(SubScriptionHistory).where(
-                    SubScriptionHistory.event_data.contains(f'"paypal_order_id": "{order_id}')
+                select(PaymentHistory).where(
+                    PaymentHistory.event_data.contains(f'"paypal_order_id": "{order_id}')
                 )
             )
             history = result.scalars().first()
@@ -473,7 +473,7 @@ async def paypal_webhook(
                     await db.commit()
                     
                     if history_data.get("tier") == "pro" or history_data.get("tier") == "business":
-                        await create_subscription_history(
+                        await create_payment_history(
                             db=db,
                             user_id=user.id,
                             event_type="payment_completed",
@@ -483,7 +483,7 @@ async def paypal_webhook(
                             }
                         )
                     elif history_data.get("tier") in ["small", "medium", "large", "enterprise"]:
-                        await create_subscription_history(
+                        await create_payment_history(
                             db=db,
                             user_id=user.id,
                             event_type="payment_completed",
@@ -492,7 +492,6 @@ async def paypal_webhook(
                                 "character_balance": user.character_balance
                             }
                         )
-        
         return {"status": "success"}
     
     except Exception as e:
@@ -501,8 +500,6 @@ async def paypal_webhook(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing webhook: {str(e)}"
         )
-
-
 
 @router.get("/subscription/{subscription_id}")
 async def get_subscription(

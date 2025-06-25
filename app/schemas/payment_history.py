@@ -2,14 +2,14 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
-class SubscriptionHistoryBase(BaseModel):
+class PaymentHistoryBase(BaseModel):
     event_type: str
     event_data: Optional[str] = None
     
-class SubscriptionHistoryCreate(SubscriptionHistoryBase):
+class PaymentHistoryCreate(PaymentHistoryBase):
     user_id: int
     
-class SubscriptionHistoryRead(SubscriptionHistoryBase):
+class PaymentHistoryRead(PaymentHistoryBase):
     id: int
     user_id: int
     created_at: datetime
@@ -17,7 +17,7 @@ class SubscriptionHistoryRead(SubscriptionHistoryBase):
     class Config:
         orm_mode = True
         
-class SubscriptionHistoryUpdate(BaseModel):
+class PaymentHistoryUpdate(BaseModel):
     event_type: Optional[str] = None
     event_data: Optional[str] = None
     

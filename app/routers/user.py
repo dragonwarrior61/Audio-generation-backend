@@ -7,8 +7,8 @@ from sqlalchemy import or_
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserRead, UserUpdate
-from app.models.subscription_history import SubScriptionHistory
-from app.schemas.subscription_history import SubscriptionHistoryRead, SubscriptionHistoryCreate
+from app.models.payment_history import SubScriptionHistory
+from app.schemas.payment_history import SubscriptionHistoryRead, SubscriptionHistoryCreate
 from app.config import settings
 from app.routers.email_service import send_verification_email
 from jose import jwt, JWTError
