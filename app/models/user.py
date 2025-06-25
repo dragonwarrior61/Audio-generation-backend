@@ -42,5 +42,7 @@ class User(Base):
     character_balance = Column(Integer, default=0)
     voice_balance = Column(Integer, default=0)
     
+    month_character_balance = Column(Integer, default=0)
+    month_voice_balance = Column(Integer, default=0)
     subscription_history = relationship("SubscriptionHistory", back_populates="user")
     

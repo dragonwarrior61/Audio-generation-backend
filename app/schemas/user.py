@@ -33,6 +33,8 @@ class UserRead(UserBase):
     payment_method: Optional[str]
     character_balance: int
     voice_balance: int
+    month_character_balance: int
+    month_voice_balance: int
     class Config:
         orm_mode = True
 class UserUpdate(UserBase):
